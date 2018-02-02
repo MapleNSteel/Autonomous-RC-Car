@@ -25,6 +25,7 @@ def exit_gracefully(signum, frame):
         print("Ok ok, quitting")
         sys.exit(1)
 
+	autopilotPort.close()
 	disarmController()
     # restore the exit gracefully handler here    
     signal.signal(signal.SIGINT, exit_gracefully)
@@ -60,6 +61,7 @@ def main():
     print(autopilotPort.port)
     
     armController()
+    autopilotPort.close()
     
 if __name__ == "__main__": 
     main()
