@@ -133,30 +133,34 @@ def main():
 		
 	found=False
 	
+	print("Searching for autopilot.")
+	
 	for serialDevice in serialDevices:
-		print(serialDevice)
 		try:
 			autopilotPort=serial.Serial(serialDevice, 115200, timeout=0.5)
 		except:
 			continue
-		autopilotPort.write("Are you the autopilot?")
+			
 		print("Are you the autopilot?")
-		time.sleep(1)
-		a=autopilotPort.readline().rstrip('\n')[0:-1]
+		autopilotPort.write("Are you the autopilot?")
+		while(not autopilotPort.inWaiting()):
+		    continue
+		a=autopilotPort.readline()[0:-2]
 		print(a)
 		test="Yes"
-		neq=False
-		if(len(a)==len(test)):
-			for i in range(0,len(a)):
-					if(a[i]!=test[i]):
-						neq=True
-		if(not neq):
+		neq=True
+		print(test==a)
+		if(test==a):
 			found=True
 			break
+		autopilotPort.close()
 	
 	if(not found):
 		autopilotPort.close()
+		print("Could not find autopilot.")
 		sys.exit(1)
+	
+	print("Found autopilot.")
 	
 	armController()
 	while(not autopilotPort.inWaiting()):
