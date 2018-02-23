@@ -12,6 +12,8 @@ unsigned int pwm_lowerlimit_steer=6554;
 
 unsigned int pwm_steer = pwm_center_steer;
 
+volatile float errorRPM=0, errorRPMPrevious=0, errorRPMIntegral=0;
+
 volatile unsigned int pwm_throttle=pwm_centre_throttle;
 volatile float targetSpeed;
 
@@ -42,9 +44,11 @@ float throttlePID();
 
 float position[] ={0,0,0};
 
-float Kp=3.5;
-float Ki=0.001;
-float Kd=0.5;
+volatile float Kp=10;
+volatile float Ki=1;
+volatile float Kd=1;
+
+bool tuningMode=false;
 
 void setup() {
   Serial.begin(115200);
@@ -84,6 +88,8 @@ void estop(){
   analogWrite(5,pwm_center_steer);  // Setup zero velocity and steering.
   analogWrite(6,pwm_centre_throttle);
 
+  targetSpeed=0;
+
   Serial.println("Emergency Stop!!");
 }
 
@@ -105,10 +111,17 @@ void controlLoop(){
     if((micros()-revCurrent)>(revCurrent-revPrevious)){
       speed=0; 
     }
+    errorRPMPrevious=errorRPM;
+    errorRPM=targetSpeed-speed;
+    errorRPMIntegral+=errorRPMPrevious*0.01;
     count++;
     estopState=0;
-    
-    Serial.println("Heart Beat: "+String(micros())+", Speed:"+String(speed));
+    if(tuningMode){
+      Serial.println("Heart Beat: "+String(micros())+", Speed: "+String(speed)+", Desired Speed: "+String(targetSpeed)+", Error: "+String(errorRPM));
+    }
+    else{
+      Serial.println("Heart Beat: "+String(micros())+", Speed: "+String(speed));
+    }
     analogWrite(5,pwm_steer);  // Setup zero velocity and steering.
     analogWrite(6,pwm_throttle);
     
@@ -137,7 +150,8 @@ int mapSignal(int sig, int minForward, int maxForward, int centre, int minBackwa
 }
 
 float throttlePID(){
-  return 0;
+  
+  return Kp*errorRPM + Kd*0.01*(errorRPM-errorRPMPrevious)+ Ki*errorRPMIntegral ;
 }
 
 void loop() {
@@ -145,24 +159,50 @@ void loop() {
   if(Serial.available()){
     String header=Serial.readString();
 
+    int PWM;
+    bool Estop;
+    
     if(header.equals("Are you the autopilot?")){  //Possible 
       Serial.println("Yes");
     }
-    if(header.equals("Arm") && armed ==0){  //Possible 
+    if(header.equals("Arm")){  //Possible 
       armed=1;
     }
-    if(header.equals("Disarm") && armed==1){
+    if(header.equals("Disarm")){
       armed=0;
       analogWrite(5,pwm_center_steer);  // Setup zero velocity and steering.
       analogWrite(6,pwm_centre_throttle);
-      digitalWrite(13,0);    
+      digitalWrite(13,0);  
+      Serial.flush();  
     }
     else{
-      targetSpeed=header.substring(0, header.indexOf(',')).substring(2).toInt();
-      header=header.substring(header.indexOf(',')+1);
-      int PWM=header.substring(0, header.indexOf(',')).substring(2).toInt();
-      header=header.substring(header.indexOf(',')+1);
-      bool Estop=header.substring(0, header.indexOf(',')).substring(2)=="1";
+      String element;
+      while(!element.equals(header)){
+        element=header.substring(0, header.indexOf(','));
+        header=header.substring(header.indexOf(',')+1);
+        if(element.substring(0,element.indexOf(':')).equals("T")){
+          targetSpeed=element.substring(element.indexOf(':')+1).toFloat();
+        }
+        if(element.substring(0,element.indexOf(':')).equals("S")){
+          PWM=element.substring(element.indexOf(':')+1).toFloat();
+        }
+        if(element.substring(0,element.indexOf(':')).equals("E")){
+          Estop=element.substring(element.indexOf(':')+1).toFloat()==1;
+        }
+        if(element.substring(0,element.indexOf(':')).equals("Kp")){
+          Kp=element.substring(element.indexOf(':')+1).toFloat();
+        }
+        if(element.substring(0,element.indexOf(':')).equals("Ki")){
+          Ki=element.substring(element.indexOf(':')+1).toFloat();
+        }
+        if(element.substring(0,element.indexOf(':')).equals("Kd")){
+          Kd=element.substring(element.indexOf(':')+1).toFloat();
+        }
+        if(element.substring(0,element.indexOf(':')).equals("TM")){
+          Serial.println(element.substring(element.indexOf(':')+1));
+          tuningMode=element.substring(element.indexOf(':')+1)=="1";
+        }
+      }
   
       pwm_steer=mapSignal(PWM, pwm_center_steer, pwm_upperlimit_steer, pwm_center_steer, pwm_center_steer, pwm_lowerlimit_steer);
       estopState=Estop;
