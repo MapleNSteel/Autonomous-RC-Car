@@ -1,4 +1,5 @@
 #include<IntervalTimer.h>
+//#define FILTER_ON
 
 unsigned int pwm_centre_throttle = 9830;  //  15% duty cycle - corresponds to zero velocity, zero steering
 unsigned int pwm_forwardMin = 10090;   //  15.38% duty cycle - correspond to minimum moving forward velocity
@@ -26,8 +27,14 @@ bool estopState = 0;
 bool ledState=1;
 unsigned short count=1;
 
+#ifdef FILTERON
+const char filterSize=11;
+float speedRegister[filterSize];
+const float firFilter[]={0.0052, 0.1139, 0.0855, 0.1088, 0.1228, 0.1276, 0.1228, 0.1088, 0.0855, 0.1139, 0.0052};
+#endif
+
 float speed=0;
-float wheelRadius=0.089;//m
+const float wheelRadius=0.098425;//m
 
 long unsigned int revCount=0;
 unsigned long int revPrevious=0;
@@ -44,9 +51,9 @@ float throttlePID();
 
 float position[] ={0,0,0};
 
-volatile float Kp=10;
-volatile float Ki=1;
-volatile float Kd=1;
+volatile float Kp=1.3;
+volatile float Ki=0.22;
+volatile float Kd=0.1;
 
 bool tuningMode=false;
 
@@ -82,6 +89,11 @@ void setup() {
 
   controlTimer.priority(0);
   controlTimer.begin(controlLoop, controlInterval);
+  #ifdef FILTERON
+  for(char i=0;i<filterSize;i++){
+    speedRegister[i]=0;
+  }
+  #endif
 }
 
 void estop(){
@@ -102,25 +114,36 @@ void controlLoop(){
       ledState=!ledState;
     }
     
-    pwm_throttle=mapSignal(throttlePID(), pwm_forwardMin, pwm_forwardMax, pwm_centre_throttle, pwm_backwardMin, pwm_backwardMax);
+    pwm_throttle=(unsigned int)(mapSignal(throttlePID(), pwm_forwardMin, pwm_forwardMax, pwm_centre_throttle, pwm_backwardMin, pwm_backwardMax));
     interrupts();
   
     speed=1000000*(2*(3.14159265359/3)*wheelRadius)/(revCurrent-revPrevious);
     speed=speed*(speed>=0.18);
-  
+    
     if((micros()-revCurrent)>(revCurrent-revPrevious)){
       speed=0; 
     }
+    #ifdef FILTERON
+    float tempSpeed=0;
+    //Shifting register.
+    for(char i=0;i<filterSize;i++){
+      speedRegister[i]=speedRegister[i+1];
+      tempSpeed+=speedRegister[i]*firFilter[i];
+    }
+    speedRegister[filterSize-1]=speed;
+    tempSpeed+=speedRegister[filterSize-1]*firFilter[filterSize-1];
+    speed=tempSpeed;
+    #endif
     errorRPMPrevious=errorRPM;
     errorRPM=targetSpeed-speed;
     errorRPMIntegral+=errorRPMPrevious*0.01;
     count++;
     estopState=0;
     if(tuningMode){
-      Serial.println("Heart Beat: "+String(micros())+", Speed: "+String(speed)+", Desired Speed: "+String(targetSpeed)+", Error: "+String(errorRPM));
+      Serial.println("Heart Beat: "+String(micros())+", Throttle Input: "+String(pwm_throttle)+", Speed: "+String(speed)+", Desired Speed: "+String(targetSpeed)+", Error: "+String(errorRPM));
     }
     else{
-      Serial.println("Heart Beat: "+String(micros())+", Speed: "+String(speed));
+      Serial.println("Heart Beat: "+String(micros())+", Throttle Input: "+String(pwm_throttle)+", Speed: "+String(speed));
     }
     analogWrite(5,pwm_steer);  // Setup zero velocity and steering.
     analogWrite(6,pwm_throttle);
@@ -151,7 +174,7 @@ int mapSignal(int sig, int minForward, int maxForward, int centre, int minBackwa
 
 float throttlePID(){
   
-  return Kp*errorRPM + Kd*0.01*(errorRPM-errorRPMPrevious)+ Ki*errorRPMIntegral ;
+  return constrain(Kp*errorRPM + Kd*0.01*(errorRPM-errorRPMPrevious)+ Ki*errorRPMIntegral/0.01, -100, 100) ;
 }
 
 void loop() {
@@ -174,6 +197,9 @@ void loop() {
       analogWrite(6,pwm_centre_throttle);
       digitalWrite(13,0);  
       Serial.flush();  
+      errorRPM=0;
+      errorRPMPrevious=0;
+      errorRPMIntegral=0;
     }
     else{
       String element;
