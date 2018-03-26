@@ -2,8 +2,8 @@
 //#define FILTER_ON
 
 unsigned int pwm_centre_throttle = 9830;  //  15% duty cycle - corresponds to zero velocity, zero steering
-unsigned int pwm_forwardMin = 10090;   //  15.38% duty cycle - correspond to minimum moving forward velocity
-unsigned int pwm_backwardMin = 9503;   //  14.52% duty cycle - correspond to minimum moving backward velocity
+unsigned int pwm_forwardMin = 9900;   //  15.38% duty cycle - correspond to minimum moving forward velocity
+unsigned int pwm_backwardMin = 9430;   //  14.52% duty cycle - correspond to minimum moving backward velocity
 unsigned int pwm_backwardMax = 6554;    //  10% duty cycle - corresponds to max reverse velocity
 unsigned int pwm_forwardMax = 13107;   //  20% duty cycle - corresponds to max forward velocity
 
@@ -42,7 +42,7 @@ unsigned long int revCurrent=micros();
 
 bool armed=0;
 
-long int controlInterval=10000;
+long int controlInterval=1000;
 IntervalTimer controlTimer;
 
 void speedISR();
@@ -51,14 +51,15 @@ float throttlePID();
 
 float position[] ={0,0,0};
 
-volatile float Kp=1.3;
-volatile float Ki=0.22;
-volatile float Kd=0.1;
+volatile float Kp=2.0;
+volatile float Ki=10.0;
+volatile float Kd=0.01;
 
 bool tuningMode=false;
 
 void setup() {
   Serial.begin(115200);
+  Serial.setTimeout(0);
   // Need to produce PWM signals so we need to setup the PWM registers. This setup happens next.
   analogWriteFrequency(5, 100);     //  freq at which PWM signals is generated at pin 5.
   analogWriteFrequency(6, 100); 
@@ -87,7 +88,7 @@ void setup() {
   pinMode(speedPin, INPUT_PULLUP);  // Setup pin that read speed in RPS
   attachInterrupt(speedPin, speedISR, RISING);
 
-  controlTimer.priority(0);
+  controlTimer.priority(128);
   controlTimer.begin(controlLoop, controlInterval);
   #ifdef FILTERON
   for(char i=0;i<filterSize;i++){
@@ -108,7 +109,7 @@ void estop(){
 void controlLoop(){
   if(armed){
     noInterrupts();
-    if(count%100==0){
+    if(count%1000==0){
       digitalWrite(13,ledState);    
       count=0;
       ledState=!ledState;
@@ -136,14 +137,17 @@ void controlLoop(){
     #endif
     errorRPMPrevious=errorRPM;
     errorRPM=targetSpeed-speed;
-    errorRPMIntegral+=errorRPMPrevious*0.01;
+    if(targetSpeed<0)
+      errorRPM=targetSpeed+speed;
+    errorRPMIntegral+=errorRPMPrevious*0.001;
     count++;
     estopState=0;
+    float actualSpeed=targetSpeed>=0?speed:-speed;
     if(tuningMode){
-      Serial.println("Heart Beat: "+String(micros())+", Throttle Input: "+String(pwm_throttle)+", Speed: "+String(speed)+", Desired Speed: "+String(targetSpeed)+", Error: "+String(errorRPM));
+      Serial.println("Heart Beat: "+String(micros())+", Throttle Input: "+String(pwm_throttle)+", Speed: "+String(actualSpeed)+", Desired Speed: "+String(targetSpeed)+", Error: "+String(errorRPM));
     }
     else{
-      Serial.println("Heart Beat: "+String(micros())+", Throttle Input: "+String(pwm_throttle)+", Speed: "+String(speed));
+      Serial.println("Heart Beat: "+String(micros())+", Throttle Input: "+String(pwm_throttle)+", Speed: "+String(actualSpeed));
     }
     analogWrite(5,pwm_steer);  // Setup zero velocity and steering.
     analogWrite(6,pwm_throttle);
@@ -161,27 +165,27 @@ void speedISR(){
 }
 
 int mapSignal(int sig, int minForward, int maxForward, int centre, int minBackward, int maxBackward){
-  if (sig > 0.0){
+  if (targetSpeed > 0.0){
       return (int)map(sig, 0, 100, minForward, maxForward);
     }
-    else if(sig < 0.0){
+    else if(targetSpeed < 0.0){
       return (int)map(sig, -100, 0, maxBackward, minBackward);
     }
-    else{
-      return pwm_centre_throttle;
+    else if(targetSpeed==0){
+      return centre;
     }
 }
 
 float throttlePID(){
   
-  return constrain(Kp*errorRPM + Kd*0.01*(errorRPM-errorRPMPrevious)+ Ki*errorRPMIntegral/0.01, -100, 100) ;
+  return constrain(Kp*errorRPM + Kd*0.001*(errorRPM-errorRPMPrevious)+ Ki*errorRPMIntegral, -100, 100) ;
 }
 
 void loop() {
   // put your main code here, to run repeatedly:
   if(Serial.available()){
     String header=Serial.readString();
-
+    
     int PWM;
     bool Estop;
     
@@ -190,6 +194,9 @@ void loop() {
     }
     if(header.equals("Arm")){  //Possible 
       armed=1;
+      errorRPM=0, errorRPMPrevious=0, errorRPMIntegral=0;
+      targetSpeed=0;
+      pwm_throttle=pwm_forwardMin;
     }
     if(header.equals("Disarm")){
       armed=0;
