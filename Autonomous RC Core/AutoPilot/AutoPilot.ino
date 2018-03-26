@@ -237,7 +237,7 @@ void loop() {
         }
       }
   
-      pwm_steer=mapSignal(PWM, pwm_center_steer, pwm_upperlimit_steer, pwm_center_steer, pwm_center_steer, pwm_lowerlimit_steer);
+      pwm_steer=map(PWM, -100, 100, pwm_lowerlimit_steer, pwm_upperlimit_steer);
       estopState=Estop;
     }
   }
